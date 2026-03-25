@@ -11,3 +11,12 @@ C:\HWXWS\code\sysy-make-template>docker exec -it devbox bash
 root@d9462d2e9edc:~# cd compiler/
 root@d9462d2e9edc:~/compiler# ls   
 Makefile  README.md  build  docs  hello.c  src
+
+
+以后修改代码确认功能正确后，使用以下命令推送：
+
+```
+git add .
+git commit -m "你的提交信息"
+git push
+```

@@ -31,26 +31,20 @@ using namespace std;
   std::string *str_val;
   int int_val;
   BaseAST *ast_val;
+  char char_val;
 }
 
-// lexer 返回的所有 token 种类的声明
-// 注意 IDENT 和 INT_CONST 会返回 token 的值, 分别对应 str_val 和 int_val
 %token INT RETURN
+%token EQ NE LE GE AND OR
 %token <str_val> IDENT
 %token <int_val> INT_CONST
 
-// 非终结符的类型定义
-%type <ast_val> FuncDef FuncType Block Stmt Number
+%type <ast_val> FuncDef FuncType Block Stmt Exp PrimaryExp UnaryExp MulExp AddExp RelExp EqExp LAndExp LOrExp Number
+%type <char_val> UnaryOp
 
 %%
 
-// 开始符, CompUnit ::= FuncDef, 大括号后声明了解析完成后 parser 要做的事情
-// 之前我们定义了 FuncDef 会返回一个 str_val, 也就是字符串指针
-// 而 parser 一旦解析完 CompUnit, 就说明所有的 token 都被解析了, 即解析结束了
-// 此时我们应该把 FuncDef 返回的结果收集起来, 作为 AST 传给调用 parser 的函数
-// $1 指代规则里第一个符号的返回值, 也就是 FuncDef 的返回值
-// unique_ptr 这种智能指针可以自动帮我们 delete
-
+// CompUnit    ::= FuncDef;
 CompUnit
   : FuncDef {
     auto comp_unit = make_unique<CompUnitAST>();
@@ -59,22 +53,25 @@ CompUnit
   }
   ;
 
+// FuncDef     ::= FuncType IDENT "(" ")" Block;
 FuncDef
   : FuncType IDENT '(' ')' Block {
     auto ast = new FuncDefAST();
     ast->func_type = unique_ptr<BaseAST>($1);
     ast->ident = *unique_ptr<string>($2);
     ast->block = unique_ptr<BaseAST>($5);
-    $$ = ast;// $$ 就是 yylval.ast_val
+    $$ = ast;
   }
   ;
 
+// FuncType    ::= "int";
 FuncType
   : INT {
     $$ = new FuncTypeAST();
   }
   ;
 
+// Block       ::= "{" Stmt "}";
 Block
   : '{' Stmt '}' {
     auto ast = new BlockAST();
@@ -82,25 +79,202 @@ Block
     $$ = ast;
   }
   ;
-
+   
+// Stmt        ::= "return" Exp ";";
 Stmt
-  : RETURN Number ';' {
+  : RETURN Exp ';' {
     auto ast = new StmtAST();
-    ast->number = unique_ptr<BaseAST>($2);
+    ast->exp = unique_ptr<BaseAST>($2);
+    $$ = ast;
+  }
+  ;
+// Exp         ::= LOrExp;
+Exp
+  : LOrExp {
+    $$ = $1;
+  }
+  ;
+
+// LOrExp      ::= LAndExp | LOrExp "||" LAndExp;
+LOrExp
+  : LAndExp {
+    $$ = $1;
+  }
+  | LOrExp OR LAndExp {
+    auto ast = new BinaryExprAST();
+    ast->op = '|';
+    ast->left = unique_ptr<BaseAST>($1);
+    ast->right = unique_ptr<BaseAST>($3);
     $$ = ast;
   }
   ;
 
+// LAndExp     ::= EqExp | LAndExp "&&" EqExp;
+LAndExp
+  : EqExp {
+    $$ = $1;
+  }
+  | LAndExp AND EqExp {
+    auto ast = new BinaryExprAST();
+    ast->op = '&';
+    ast->left = unique_ptr<BaseAST>($1);
+    ast->right = unique_ptr<BaseAST>($3);
+    $$ = ast;
+  }
+  ;
+
+// EqExp       ::= RelExp | EqExp ("==" | "!=") RelExp;
+EqExp
+  : RelExp {
+    $$ = $1;
+  }
+  | EqExp EQ RelExp {
+    auto ast = new BinaryExprAST();
+    ast->op = 'E';
+    ast->left = unique_ptr<BaseAST>($1);
+    ast->right = unique_ptr<BaseAST>($3);
+    $$ = ast;
+  }
+  | EqExp NE RelExp {
+    auto ast = new BinaryExprAST();
+    ast->op = 'N';
+    ast->left = unique_ptr<BaseAST>($1);
+    ast->right = unique_ptr<BaseAST>($3);
+    $$ = ast;
+  }
+  ;
+
+// RelExp      ::= AddExp | RelExp ("<" | ">" | "<=" | ">=") AddExp;
+RelExp
+  : AddExp {
+    $$ = $1;
+  }
+  | RelExp '<' AddExp {
+    auto ast = new BinaryExprAST();
+    ast->op = '<';
+    ast->left = unique_ptr<BaseAST>($1);
+    ast->right = unique_ptr<BaseAST>($3);
+    $$ = ast;
+  }
+  | RelExp '>' AddExp {
+    auto ast = new BinaryExprAST();
+    ast->op = '>';
+    ast->left = unique_ptr<BaseAST>($1);
+    ast->right = unique_ptr<BaseAST>($3);
+    $$ = ast;
+  }
+  | RelExp LE AddExp {
+    auto ast = new BinaryExprAST();
+    ast->op = 'L';
+    ast->left = unique_ptr<BaseAST>($1);
+    ast->right = unique_ptr<BaseAST>($3);
+    $$ = ast;
+  }
+  | RelExp GE AddExp {
+    auto ast = new BinaryExprAST();
+    ast->op = 'G';
+    ast->left = unique_ptr<BaseAST>($1);
+    ast->right = unique_ptr<BaseAST>($3);
+    $$ = ast;
+  }
+  ;
+
+// AddExp      ::= MulExp | AddExp ("+" | "-") MulExp;
+AddExp
+  : MulExp {
+    $$ = $1;
+  }
+  | AddExp '+' MulExp {
+    auto ast = new BinaryExprAST();
+    ast->op = '+';
+    ast->left = unique_ptr<BaseAST>($1);
+    ast->right = unique_ptr<BaseAST>($3);
+    $$ = ast;
+  }
+  | AddExp '-' MulExp {
+    auto ast = new BinaryExprAST();
+    ast->op = '-';
+    ast->left = unique_ptr<BaseAST>($1);
+    ast->right = unique_ptr<BaseAST>($3);
+    $$ = ast;
+  }
+  ;
+
+// MulExp      ::= UnaryExp | MulExp ("*" | "/" | "%") UnaryExp;
+MulExp
+  : UnaryExp {
+    $$ = $1;
+  }
+  | MulExp '*' UnaryExp {
+    auto ast = new BinaryExprAST();
+    ast->op = '*';
+    ast->left = unique_ptr<BaseAST>($1);
+    ast->right = unique_ptr<BaseAST>($3);
+    $$ = ast;
+  }
+  | MulExp '/' UnaryExp {
+    auto ast = new BinaryExprAST();
+    ast->op = '/';
+    ast->left = unique_ptr<BaseAST>($1);
+    ast->right = unique_ptr<BaseAST>($3);
+    $$ = ast;
+  }
+  | MulExp '%' UnaryExp {
+    auto ast = new BinaryExprAST();
+    ast->op = '%';
+    ast->left = unique_ptr<BaseAST>($1);
+    ast->right = unique_ptr<BaseAST>($3);
+    $$ = ast;
+  }
+  ;
+
+// UnaryOp     ::= "+" | "-" | "!";
+UnaryOp
+  : '+' {
+    $$ = '+';
+  }
+  | '-' {
+    $$ = '-';
+  }
+  | '!' {
+    $$ = '!';
+  }
+  ;
+
+// UnaryExp    ::= PrimaryExp | UnaryOp UnaryExp;
+UnaryExp
+  : PrimaryExp {
+    $$ = $1;
+  }
+  | UnaryOp UnaryExp {
+    auto ast = new UnaryExprAST();
+    ast->op = $1;
+    ast->exp = unique_ptr<BaseAST>($2);
+    $$ = ast;
+  }
+  ;
+
+// PrimaryExp  ::= "(" Exp ")" | Number;
+PrimaryExp
+  : '(' Exp ')' {
+    $$ = $2;
+  }
+  | Number {
+    $$ = $1;
+  }
+  ;
+
+// Number      ::= INT_CONST;
 Number
   : INT_CONST {
     $$ = new NumberAST($1);
   }
   ;
 
+
+
 %%
 
-// 定义错误处理函数, 其中第二个参数是错误信息
-// parser 如果发生错误 (例如输入的程序出现了语法错误), 就会调用这个函数
 void yyerror(unique_ptr<BaseAST> &ast, const char *s) {
   cerr << "error: " << s << endl;
 }

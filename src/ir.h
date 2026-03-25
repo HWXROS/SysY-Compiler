@@ -4,12 +4,18 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <sstream>
+class IRBuilder {
+  public:
+  int next_id = 0;
+  int NewId() { return next_id++; }
+};
 
+//-------------------------------------------------------------------------------------------------------------------
 class KoopaValue {
  public:
   virtual ~KoopaValue() = default;
-  virtual void Dump() const = 0;
-  virtual void DumpRiscV() const = 0;
+  virtual void Dump(std::ostream &os) const = 0;
 };
 
 class IntConst : public KoopaValue {
@@ -17,46 +23,148 @@ class IntConst : public KoopaValue {
  public:
   IntConst(int v) : value(v) {}
   int GetValue() const { return value; }
-  void Dump() const override {
-    std::cout << value;
-  }
-  void DumpRiscV() const override {
-    std::cout << "    li a0, " << value << "\n";
+  void Dump(std::ostream &os) const override {
+    os << value;
   }
 };
 
-class RetInst : public KoopaValue {
+class ValueRef : public KoopaValue {
+  int id;
+ public:
+  ValueRef(int i) : id(i) {}
+  int GetId() const { return id; }
+  void Dump(std::ostream &os) const override {
+    os << "%" << id;
+  }
+};
+
+
+// -----------------------------------------------------------------------------------------------------------------
+class Instruction {
+ public:
+  virtual ~Instruction() = default;
+  virtual void Dump(std::ostream &os) const = 0;
+};
+
+class UnaryOpInst : public Instruction {
+  int result_id;
+  char op;
+  std::unique_ptr<KoopaValue> operand;
+ public:
+  UnaryOpInst(int id, char o, std::unique_ptr<KoopaValue> opnd) 
+      : result_id(id), op(o), operand(std::move(opnd)) {}
+  int GetResultId() const { return result_id; }
+  void Dump(std::ostream &os) const override {
+    os << "  %" << result_id << " = ";
+    switch (op) {
+      case '+':
+        operand->Dump(os);
+        break;
+      case '-':
+        os << "sub 0, ";
+        operand->Dump(os);
+        break;
+      case '!':
+        os << "eq 0, ";
+        operand->Dump(os);
+        break;
+    }
+    os << "\n";
+  }
+};
+
+class BinaryOpInst : public Instruction {
+  int result_id;
+  char op;
+  std::unique_ptr<KoopaValue> lhs;
+  std::unique_ptr<KoopaValue> rhs;
+ public:
+  BinaryOpInst(int id, char o, std::unique_ptr<KoopaValue> l, std::unique_ptr<KoopaValue> r)
+      : result_id(id), op(o), lhs(std::move(l)), rhs(std::move(r)) {}
+  int GetResultId() const { return result_id; }
+  void Dump(std::ostream &os) const override {
+    os << "  %" << result_id << " = ";
+    switch (op) {
+      case '+':
+        os << "add ";
+        break;
+      case '-':
+        os << "sub ";
+        break;
+      case '*':
+        os << "mul ";
+        break;
+      case '/':
+        os << "div ";
+        break;
+      case '%':
+        os << "mod ";
+        break;
+      case '<':
+        os << "lt ";
+        break;
+      case '>':
+        os << "gt ";
+        break;
+      case 'L':
+        os << "le ";
+        break;
+      case 'G':
+        os << "ge ";
+        break;
+      case 'E':
+        os << "eq ";
+        break;
+      case 'N':
+        os << "ne ";
+        break;
+      case '&':
+        os << "and ";
+        break;
+      case '|':
+        os << "or ";
+        break;
+    }
+    lhs->Dump(os);
+    os << ", ";
+    rhs->Dump(os);
+    os << "\n";
+  }
+};
+
+// class JumpInst : public Instruction {
+//   std::string target;
+//  public:
+//   JumpInst(const std::string &t) : target(t) {}
+//   void Dump(std::ostream &os) const override {
+//     os << "  jump " << target << "\n";
+//   }
+// };
+
+class RetInst : public Instruction {
   std::unique_ptr<KoopaValue> value;
  public:
   RetInst(std::unique_ptr<KoopaValue> v) : value(std::move(v)) {}
-  void Dump() const override {
-    std::cout << "  ret ";
-    value->Dump();
-    std::cout << "\n";
-  }
-  void DumpRiscV() const override {
-    value->DumpRiscV();
-    std::cout << "    ret\n";
+  void Dump(std::ostream &os) const override {
+    os << "  ret ";
+    value->Dump(os);
+    os << "\n";
   }
 };
 
+// -----------------------------------------------------------------------------------------------------------------
 class BasicBlock {
   std::string name;
-  std::vector<std::unique_ptr<KoopaValue>> insts;
+  std::vector<std::unique_ptr<Instruction>> insts;
  public:
   BasicBlock(const std::string &n) : name(n) {}
-  void AddInst(std::unique_ptr<KoopaValue> inst) {
+  void AddInst(std::unique_ptr<Instruction> inst) {
     insts.push_back(std::move(inst));
   }
-  void Dump() const {
-    std::cout << "%" << name << ":\n";
+  void Dump(std::ostream &os) const {
+    os << "%" << name << ":\n";
     for (const auto &inst : insts) {
-      inst->Dump();
-    }
-  }
-  void DumpRiscV() const {
-    for (const auto &inst : insts) {
-      inst->DumpRiscV();
+      inst->Dump(os);
     }
   }
 };
@@ -71,20 +179,12 @@ class Function {
   void AddBlock(std::unique_ptr<BasicBlock> block) {
     blocks.push_back(std::move(block));
   }
-  void Dump() const {
-    std::cout << "fun @" << name << "(): " << ret_type << " {\n";
+  void Dump(std::ostream &os) const {
+    os << "fun @" << name << "(): " << ret_type << " {\n";
     for (const auto &block : blocks) {
-      block->Dump();
+      block->Dump(os);
     }
-    std::cout << "}\n";
-  }
-  void DumpRiscV() const {
-    std::cout << "  .text\n";
-    std::cout << "  .globl " << name << "\n";
-    std::cout << name << ":\n";
-    for (const auto &block : blocks) {
-      block->DumpRiscV();
-    }
+    os << "}\n";
   }
 };
 
@@ -94,14 +194,14 @@ class Program {
   void AddFunc(std::unique_ptr<Function> func) {
     funcs.push_back(std::move(func));
   }
-  void Dump() const {
+  void Dump(std::ostream &os) const {
     for (const auto &func : funcs) {
-      func->Dump();
+      func->Dump(os);
     }
   }
-  void DumpRiscV() const {
-    for (const auto &func : funcs) {
-      func->DumpRiscV();
-    }
+  std::string ToString() const {
+    std::ostringstream oss;
+    Dump(oss);
+    return oss.str();
   }
 };
