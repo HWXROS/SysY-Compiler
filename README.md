@@ -1,1 +1,1 @@
-该仓库中存放了一个基于北大https://pku-minic.github.io/online-doc/#/lv1-main/教程编写的 SysY 编译器项目
+该仓库中存放了一个基于北大 https://pku-minic.github.io/online-doc/#/lv1-main/教程编写的 SysY 编译器项目
