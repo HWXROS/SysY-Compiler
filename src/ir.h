@@ -5,17 +5,20 @@
 #include <string>
 #include <vector>
 #include <sstream>
+
 class IRBuilder {
-  public:
+ public:
   int next_id = 0;
+  
   int NewId() { return next_id++; }
 };
 
-//-------------------------------------------------------------------------------------------------------------------
 class KoopaValue {
  public:
   virtual ~KoopaValue() = default;
   virtual void Dump(std::ostream &os) const = 0;
+  virtual bool IsConst() const { return false; }
+  virtual int GetConstValue() const { return 0; }
 };
 
 class IntConst : public KoopaValue {
@@ -23,6 +26,8 @@ class IntConst : public KoopaValue {
  public:
   IntConst(int v) : value(v) {}
   int GetValue() const { return value; }
+  bool IsConst() const override { return true; }
+  int GetConstValue() const override { return value; }
   void Dump(std::ostream &os) const override {
     os << value;
   }
@@ -38,12 +43,45 @@ class ValueRef : public KoopaValue {
   }
 };
 
-
-// -----------------------------------------------------------------------------------------------------------------
 class Instruction {
  public:
   virtual ~Instruction() = default;
   virtual void Dump(std::ostream &os) const = 0;
+};
+
+class AllocInst : public Instruction {
+  int result_id;
+ public:
+  AllocInst(int id) : result_id(id) {}
+  int GetResultId() const { return result_id; }
+  void Dump(std::ostream &os) const override {
+    os << "  %" << result_id << " = alloc i32\n";
+  }
+};
+
+class StoreInst : public Instruction {
+  std::unique_ptr<KoopaValue> value;
+  int addr_id;
+ public:
+  StoreInst(std::unique_ptr<KoopaValue> v, int a)
+      : value(std::move(v)), addr_id(a) {}
+  void Dump(std::ostream &os) const override {
+    os << "  store ";
+    value->Dump(os);
+    os << ", %" << addr_id << "\n";
+  }
+};
+
+class LoadInst : public Instruction {
+  int result_id;
+  int addr_id;
+ public:
+  LoadInst(int id, int a)
+      : result_id(id), addr_id(a) {}
+  int GetResultId() const { return result_id; }
+  void Dump(std::ostream &os) const override {
+    os << "  %" << result_id << " = load %" << addr_id << "\n";
+  }
 };
 
 class UnaryOpInst : public Instruction {
@@ -132,15 +170,6 @@ class BinaryOpInst : public Instruction {
   }
 };
 
-// class JumpInst : public Instruction {
-//   std::string target;
-//  public:
-//   JumpInst(const std::string &t) : target(t) {}
-//   void Dump(std::ostream &os) const override {
-//     os << "  jump " << target << "\n";
-//   }
-// };
-
 class RetInst : public Instruction {
   std::unique_ptr<KoopaValue> value;
  public:
@@ -152,7 +181,6 @@ class RetInst : public Instruction {
   }
 };
 
-// -----------------------------------------------------------------------------------------------------------------
 class BasicBlock {
   std::string name;
   std::vector<std::unique_ptr<Instruction>> insts;

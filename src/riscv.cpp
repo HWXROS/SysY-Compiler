@@ -30,6 +30,13 @@ static void CollectReferences(const koopa_raw_program_t &program) {
               inst->kind.data.ret.value->kind.tag != KOOPA_RVT_INTEGER) {
             referenced_values.insert(inst->kind.data.ret.value);
           }
+        } else if (inst->kind.tag == KOOPA_RVT_STORE) {
+          auto &store = inst->kind.data.store;
+          if (store.value->kind.tag != KOOPA_RVT_INTEGER) {
+            referenced_values.insert(store.value);
+          }
+        } else if (inst->kind.tag == KOOPA_RVT_LOAD) {
+          referenced_values.insert(inst);
         }
       }
     }
@@ -111,6 +118,15 @@ void RiscVGenerator::Visit(const koopa_raw_value_t &value) {
     case KOOPA_RVT_BINARY:
       Visit(kind.data.binary, value);
       break;
+    case KOOPA_RVT_ALLOC:
+      VisitAlloc(value);
+      break;
+    case KOOPA_RVT_STORE:
+      Visit(kind.data.store);
+      break;
+    case KOOPA_RVT_LOAD:
+      Visit(kind.data.load, value);
+      break;
     default:
       assert(false);
   }
@@ -126,6 +142,41 @@ void RiscVGenerator::Visit(const koopa_raw_return_t &ret) {
 void RiscVGenerator::Visit(const koopa_raw_integer_t &integer) {
   *os_ << "  li a0, " << integer.value << "\n";
   last_result = nullptr;
+}
+
+void RiscVGenerator::VisitAlloc(const koopa_raw_value_t &value) {
+  int addr = stack_size;
+  stack_size -= 4;
+  value_stack[value] = addr;
+  last_result = nullptr;
+}
+
+void RiscVGenerator::Visit(const koopa_raw_store_t &store) {
+  Visit(store.value);
+  
+  auto addr_value = store.dest;
+  auto it = value_stack.find(addr_value);
+  if (it != value_stack.end()) {
+    *os_ << "  sw a0, " << it->second << "(sp)\n";
+  }
+  last_result = nullptr;
+}
+
+void RiscVGenerator::Visit(const koopa_raw_load_t &load, const koopa_raw_value_t &value) {
+  auto addr_value = load.src;
+  auto it = value_stack.find(addr_value);
+  if (it != value_stack.end()) {
+    *os_ << "  lw a0, " << it->second << "(sp)\n";
+  }
+  
+  last_result = value;
+  
+  if (referenced_values.find(value) != referenced_values.end()) {
+    int result_stack = stack_size;
+    stack_size -= 4;
+    *os_ << "  sw a0, " << result_stack << "(sp)\n";
+    value_stack[value] = result_stack;
+  }
 }
 
 void RiscVGenerator::Visit(const koopa_raw_binary_t &binary, const koopa_raw_value_t &value) {

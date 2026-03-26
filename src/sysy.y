@@ -1,6 +1,7 @@
 %code requires {
   #include <memory>
   #include <string>
+  #include <vector>
   #include "ast.h"
 }
 
@@ -9,7 +10,6 @@
 #include <iostream>
 #include "ast.h"
 
-// 声明 lexer 函数和错误处理函数
 int yylex();
 void yyerror(std::unique_ptr<BaseAST> &ast, const char *s);
 
@@ -17,34 +17,28 @@ using namespace std;
 
 %}
 
-// 定义 parser 函数和错误处理函数的附加参数
-// 我们需要返回一个字符串作为 AST, 所以我们把附加参数定义成字符串的智能指针
-// 解析完成后, 我们要手动修改这个参数, 把它设置成解析得到的字符串
 %parse-param { std::unique_ptr<BaseAST> &ast }
 
-// yylval 的定义, 我们把它定义成了一个联合体 (union)
-// 因为 token 的值有的是字符串指针, 有的是整数
-// 之前我们在 lexer 中用到的 str_val 和 int_val 就是在这里被定义的
-// 至于为什么要用字符串指针而不直接用 string 或者 unique_ptr<string>?
-// 请自行 STFW 在 union 里写一个带析构函数的类会出现什么情况
 %union {
   std::string *str_val;
   int int_val;
   BaseAST *ast_val;
   char char_val;
+  std::vector<BaseAST*> *ast_list;
 }
 
-%token INT RETURN
+%token CONST INT RETURN
 %token EQ NE LE GE AND OR
 %token <str_val> IDENT
 %token <int_val> INT_CONST
 
 %type <ast_val> FuncDef FuncType Block Stmt Exp PrimaryExp UnaryExp MulExp AddExp RelExp EqExp LAndExp LOrExp Number
+%type <ast_val> Decl ConstDecl VarDecl ConstDef VarDef ConstInitVal InitVal LVal ConstExp BType
 %type <char_val> UnaryOp
+%type <ast_list> BlockItem ConstDefList VarDefList
 
 %%
 
-// CompUnit    ::= FuncDef;
 CompUnit
   : FuncDef {
     auto comp_unit = make_unique<CompUnitAST>();
@@ -53,7 +47,6 @@ CompUnit
   }
   ;
 
-// FuncDef     ::= FuncType IDENT "(" ")" Block;
 FuncDef
   : FuncType IDENT '(' ')' Block {
     auto ast = new FuncDefAST();
@@ -64,38 +57,178 @@ FuncDef
   }
   ;
 
-// FuncType    ::= "int";
 FuncType
   : INT {
     $$ = new FuncTypeAST();
   }
   ;
 
-// Block       ::= "{" Stmt "}";
 Block
-  : '{' Stmt '}' {
+  : '{' '}' {
     auto ast = new BlockAST();
-    ast->stmt = unique_ptr<BaseAST>($2);
+    $$ = ast;
+  }
+  | '{' BlockItem '}' {
+    auto ast = new BlockAST();
+    for (auto item : *$2) {
+      ast->items.push_back(unique_ptr<BaseAST>(item));
+    }
+    delete $2;
     $$ = ast;
   }
   ;
-   
-// Stmt        ::= "return" Exp ";";
+
+BlockItem
+  : Decl {
+    $$ = new vector<BaseAST*>();
+    $$->push_back($1);
+  }
+  | Stmt {
+    $$ = new vector<BaseAST*>();
+    $$->push_back($1);
+  }
+  | BlockItem Decl {
+    $1->push_back($2);
+    $$ = $1;
+  }
+  | BlockItem Stmt {
+    $1->push_back($2);
+    $$ = $1;
+  }
+  ;
+
+Decl
+  : ConstDecl {
+    $$ = $1;
+  }
+  | VarDecl {
+    $$ = $1;
+  }
+  ;
+
+ConstDecl
+  : CONST BType ConstDefList ';' {
+    auto ast = new ConstDeclAST();
+    for (auto def : *$3) {
+      ast->const_defs.push_back(unique_ptr<BaseAST>(def));
+    }
+    delete $3;
+    $$ = ast;
+  }
+  ;
+
+ConstDefList
+  : ConstDef {
+    $$ = new vector<BaseAST*>();
+    $$->push_back($1);
+  }
+  | ConstDefList ',' ConstDef {
+    $1->push_back($3);
+    $$ = $1;
+  }
+  ;
+
+ConstDef
+  : IDENT '=' ConstInitVal {
+    auto ast = new ConstDefAST();
+    ast->ident = *unique_ptr<string>($1);
+    ast->init_val = unique_ptr<BaseAST>($3);
+    $$ = ast;
+  }
+  ;
+
+ConstInitVal
+  : ConstExp {
+    $$ = $1;
+  }
+  ;
+
+VarDecl
+  : BType VarDefList ';' {
+    auto ast = new VarDeclAST();
+    for (auto def : *$2) {
+      ast->var_defs.push_back(unique_ptr<BaseAST>(def));
+    }
+    delete $2;
+    $$ = ast;
+  }
+  ;
+
+VarDefList
+  : VarDef {
+    $$ = new vector<BaseAST*>();
+    $$->push_back($1);
+  }
+  | VarDefList ',' VarDef {
+    $1->push_back($3);
+    $$ = $1;
+  }
+  ;
+
+VarDef
+  : IDENT {
+    auto ast = new VarDefAST();
+    ast->ident = *unique_ptr<string>($1);
+    ast->has_init = false;
+    $$ = ast;
+  }
+  | IDENT '=' InitVal {
+    auto ast = new VarDefAST();
+    ast->ident = *unique_ptr<string>($1);
+    ast->init_val = unique_ptr<BaseAST>($3);
+    ast->has_init = true;
+    $$ = ast;
+  }
+  ;
+
+InitVal
+  : Exp {
+    $$ = $1;
+  }
+  ;
+
+BType
+  : INT {
+    $$ = new BTypeAST();
+  }
+  ;
+
 Stmt
   : RETURN Exp ';' {
     auto ast = new StmtAST();
+    ast->type = StmtType::RETURN;
     ast->exp = unique_ptr<BaseAST>($2);
     $$ = ast;
   }
+  | LVal '=' Exp ';' {
+    auto ast = new StmtAST();
+    ast->type = StmtType::ASSIGN;
+    ast->lval = unique_ptr<BaseAST>($1);
+    ast->exp = unique_ptr<BaseAST>($3);
+    $$ = ast;
+  }
   ;
-// Exp         ::= LOrExp;
+
 Exp
   : LOrExp {
     $$ = $1;
   }
   ;
 
-// LOrExp      ::= LAndExp | LOrExp "||" LAndExp;
+LVal
+  : IDENT {
+    auto ast = new LValAST();
+    ast->ident = *unique_ptr<string>($1);
+    $$ = ast;
+  }
+  ;
+
+ConstExp
+  : Exp {
+    $$ = $1;
+  }
+  ;
+
 LOrExp
   : LAndExp {
     $$ = $1;
@@ -109,7 +242,6 @@ LOrExp
   }
   ;
 
-// LAndExp     ::= EqExp | LAndExp "&&" EqExp;
 LAndExp
   : EqExp {
     $$ = $1;
@@ -123,7 +255,6 @@ LAndExp
   }
   ;
 
-// EqExp       ::= RelExp | EqExp ("==" | "!=") RelExp;
 EqExp
   : RelExp {
     $$ = $1;
@@ -144,7 +275,6 @@ EqExp
   }
   ;
 
-// RelExp      ::= AddExp | RelExp ("<" | ">" | "<=" | ">=") AddExp;
 RelExp
   : AddExp {
     $$ = $1;
@@ -179,7 +309,6 @@ RelExp
   }
   ;
 
-// AddExp      ::= MulExp | AddExp ("+" | "-") MulExp;
 AddExp
   : MulExp {
     $$ = $1;
@@ -200,7 +329,6 @@ AddExp
   }
   ;
 
-// MulExp      ::= UnaryExp | MulExp ("*" | "/" | "%") UnaryExp;
 MulExp
   : UnaryExp {
     $$ = $1;
@@ -228,7 +356,6 @@ MulExp
   }
   ;
 
-// UnaryOp     ::= "+" | "-" | "!";
 UnaryOp
   : '+' {
     $$ = '+';
@@ -241,7 +368,6 @@ UnaryOp
   }
   ;
 
-// UnaryExp    ::= PrimaryExp | UnaryOp UnaryExp;
 UnaryExp
   : PrimaryExp {
     $$ = $1;
@@ -254,24 +380,23 @@ UnaryExp
   }
   ;
 
-// PrimaryExp  ::= "(" Exp ")" | Number;
 PrimaryExp
   : '(' Exp ')' {
     $$ = $2;
+  }
+  | LVal {
+    $$ = $1;
   }
   | Number {
     $$ = $1;
   }
   ;
 
-// Number      ::= INT_CONST;
 Number
   : INT_CONST {
     $$ = new NumberAST($1);
   }
   ;
-
-
 
 %%
 

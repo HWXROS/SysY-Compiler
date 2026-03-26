@@ -3,13 +3,54 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <vector>
+#include <map>
 #include "ir.h"
+
+enum class StmtType {
+  RETURN,
+  ASSIGN
+};
+
+class SymbolTable {
+ public:
+  std::map<std::string, int> const_values;
+  std::map<std::string, int> var_addrs;
+  
+  bool IsConst(const std::string &name) const {
+    return const_values.find(name) != const_values.end();
+  }
+  
+  bool IsVar(const std::string &name) const {
+    return var_addrs.find(name) != var_addrs.end();
+  }
+  
+  bool Exists(const std::string &name) const {
+    return IsConst(name) || IsVar(name);
+  }
+  
+  int GetConstValue(const std::string &name) const {
+    auto it = const_values.find(name);
+    if (it != const_values.end()) {
+      return it->second;
+    }
+    return 0;
+  }
+  
+  int GetVarAddr(const std::string &name) const {
+    auto it = var_addrs.find(name);
+    if (it != var_addrs.end()) {
+      return it->second;
+    }
+    return 0;
+  }
+};
 
 class BaseAST {
  public:
   virtual ~BaseAST() = default;
   virtual void Dump() const = 0;
-  virtual std::unique_ptr<KoopaValue> GenIR(BasicBlock *bb, IRBuilder &builder) const = 0;
+  virtual std::unique_ptr<KoopaValue> GenIR(BasicBlock *bb, IRBuilder &builder, SymbolTable &symtab) const = 0;
 };
 
 class CompUnitAST : public BaseAST {
@@ -21,7 +62,7 @@ class CompUnitAST : public BaseAST {
     std::cout << " }";
   }
   std::unique_ptr<Program> GenIR() const;
-  std::unique_ptr<KoopaValue> GenIR(BasicBlock *bb, IRBuilder &builder) const override {
+  std::unique_ptr<KoopaValue> GenIR(BasicBlock *bb, IRBuilder &builder, SymbolTable &symtab) const override {
     return nullptr;
   }
 };
@@ -39,7 +80,7 @@ class FuncDefAST : public BaseAST {
     std::cout << " }";
   }
   std::unique_ptr<Function> GenIR() const;
-  std::unique_ptr<KoopaValue> GenIR(BasicBlock *bb, IRBuilder &builder) const override {
+  std::unique_ptr<KoopaValue> GenIR(BasicBlock *bb, IRBuilder &builder, SymbolTable &symtab) const override {
     return nullptr;
   }
 };
@@ -49,34 +90,121 @@ class FuncTypeAST : public BaseAST {
   void Dump() const override {
     std::cout << "FuncTypeAST { int }";
   }
-  std::unique_ptr<KoopaValue> GenIR(BasicBlock *bb, IRBuilder &builder) const override {
+  std::unique_ptr<KoopaValue> GenIR(BasicBlock *bb, IRBuilder &builder, SymbolTable &symtab) const override {
+    return nullptr;
+  }
+};
+
+class BTypeAST : public BaseAST {
+ public:
+  void Dump() const override {
+    std::cout << "BTypeAST { int }";
+  }
+  std::unique_ptr<KoopaValue> GenIR(BasicBlock *bb, IRBuilder &builder, SymbolTable &symtab) const override {
     return nullptr;
   }
 };
 
 class BlockAST : public BaseAST {
  public:
-  std::unique_ptr<BaseAST> stmt;
+  std::vector<std::unique_ptr<BaseAST>> items;
   void Dump() const override {
     std::cout << "BlockAST { ";
-    stmt->Dump();
+    for (const auto &item : items) {
+      item->Dump();
+      std::cout << ", ";
+    }
     std::cout << " }";
   }
-  std::unique_ptr<BasicBlock> GenIR() const;
-  std::unique_ptr<KoopaValue> GenIR(BasicBlock *bb, IRBuilder &builder) const override {
+  std::unique_ptr<BasicBlock> GenIR(SymbolTable &symtab) const;
+  std::unique_ptr<KoopaValue> GenIR(BasicBlock *bb, IRBuilder &builder, SymbolTable &symtab) const override {
     return nullptr;
   }
 };
 
-class StmtAST : public BaseAST {
+class ConstDeclAST : public BaseAST {
  public:
-  std::unique_ptr<BaseAST> exp;
+  std::vector<std::unique_ptr<BaseAST>> const_defs;
   void Dump() const override {
-    std::cout << "StmtAST { ";
-    exp->Dump();
+    std::cout << "ConstDeclAST { ";
+    for (const auto &def : const_defs) {
+      def->Dump();
+      std::cout << ", ";
+    }
     std::cout << " }";
   }
-  std::unique_ptr<KoopaValue> GenIR(BasicBlock *bb, IRBuilder &builder) const override;
+  std::unique_ptr<KoopaValue> GenIR(BasicBlock *bb, IRBuilder &builder, SymbolTable &symtab) const override;
+};
+
+class ConstDefAST : public BaseAST {
+ public:
+  std::string ident;
+  std::unique_ptr<BaseAST> init_val;
+  void Dump() const override {
+    std::cout << "ConstDefAST { " << ident << ", ";
+    init_val->Dump();
+    std::cout << " }";
+  }
+  std::unique_ptr<KoopaValue> GenIR(BasicBlock *bb, IRBuilder &builder, SymbolTable &symtab) const override;
+};
+
+class VarDeclAST : public BaseAST {
+ public:
+  std::vector<std::unique_ptr<BaseAST>> var_defs;
+  void Dump() const override {
+    std::cout << "VarDeclAST { ";
+    for (const auto &def : var_defs) {
+      def->Dump();
+      std::cout << ", ";
+    }
+    std::cout << " }";
+  }
+  std::unique_ptr<KoopaValue> GenIR(BasicBlock *bb, IRBuilder &builder, SymbolTable &symtab) const override;
+};
+
+class VarDefAST : public BaseAST {
+ public:
+  std::string ident;
+  std::unique_ptr<BaseAST> init_val;
+  bool has_init;
+  void Dump() const override {
+    std::cout << "VarDefAST { " << ident;
+    if (has_init) {
+      std::cout << ", ";
+      init_val->Dump();
+    }
+    std::cout << " }";
+  }
+  std::unique_ptr<KoopaValue> GenIR(BasicBlock *bb, IRBuilder &builder, SymbolTable &symtab) const override;
+};
+
+class StmtAST : public BaseAST {
+ public:
+  StmtType type;
+  std::unique_ptr<BaseAST> exp;
+  std::unique_ptr<BaseAST> lval;
+  void Dump() const override {
+    std::cout << "StmtAST { ";
+    if (type == StmtType::RETURN) {
+      std::cout << "return, ";
+      exp->Dump();
+    } else {
+      lval->Dump();
+      std::cout << " = ";
+      exp->Dump();
+    }
+    std::cout << " }";
+  }
+  std::unique_ptr<KoopaValue> GenIR(BasicBlock *bb, IRBuilder &builder, SymbolTable &symtab) const override;
+};
+
+class LValAST : public BaseAST {
+ public:
+  std::string ident;
+  void Dump() const override {
+    std::cout << "LValAST { " << ident << " }";
+  }
+  std::unique_ptr<KoopaValue> GenIR(BasicBlock *bb, IRBuilder &builder, SymbolTable &symtab) const override;
 };
 
 class NumberAST : public BaseAST {
@@ -86,7 +214,7 @@ class NumberAST : public BaseAST {
   void Dump() const override {
     std::cout << value;
   }
-  std::unique_ptr<KoopaValue> GenIR(BasicBlock *bb, IRBuilder &builder) const override;
+  std::unique_ptr<KoopaValue> GenIR(BasicBlock *bb, IRBuilder &builder, SymbolTable &symtab) const override;
 };
 
 class UnaryExprAST : public BaseAST {
@@ -98,7 +226,7 @@ class UnaryExprAST : public BaseAST {
     exp->Dump();
     std::cout << " }";
   }
-  std::unique_ptr<KoopaValue> GenIR(BasicBlock *bb, IRBuilder &builder) const override;
+  std::unique_ptr<KoopaValue> GenIR(BasicBlock *bb, IRBuilder &builder, SymbolTable &symtab) const override;
 };
 
 class BinaryExprAST : public BaseAST {
@@ -112,7 +240,5 @@ class BinaryExprAST : public BaseAST {
     right->Dump();
     std::cout << " }";
   }
-  std::unique_ptr<KoopaValue> GenIR(BasicBlock *bb, IRBuilder &builder) const override;
+  std::unique_ptr<KoopaValue> GenIR(BasicBlock *bb, IRBuilder &builder, SymbolTable &symtab) const override;
 };
-
-
