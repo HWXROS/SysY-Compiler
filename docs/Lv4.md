@@ -23,6 +23,7 @@ LVal          ::= IDENT;
 ConstExp      ::= Exp;
 ```
 
+
 ## 实现细节
 
 ### 1. 词法分析器修改 (sysy.l)
@@ -67,7 +68,63 @@ Block
 ```
 
 ### 3. AST 节点 (ast.h)
+```
 
+CompUnit (编译单元)
+  │
+  └── FuncDef (函数定义)
+       │
+       ├── FuncType (函数类型)
+       ├── IDENT (函数名)
+       └── Block (函数体)
+            │
+            └── BlockItem (块内项目)
+                 │
+                 ├── Decl (声明)
+                 │    │
+                 │    ├── ConstDecl (常量声明)
+                 │    │    │
+                 │    │    ├── BType (基本类型)
+                 │    │    └── ConstDef (常量定义)
+                 │    │         │
+                 │    │         ├── IDENT (常量名)
+                 │    │         └── ConstInitVal (常量初始值)
+                 │    │              │
+                 │    │              └── ConstExp (常量表达式)
+                 │    │                   │
+                 │    │                   └── Exp (表达式)
+                 │    │                        │
+                 │    │                        └── LOrExp (逻辑或表达式)
+                 │    │                             │
+                 │    │                             └── ... (逐层向下)
+                 │    │
+                 │    └── VarDecl (变量声明)
+                 │         │
+                 │         ├── BType (基本类型)
+                 │         └── VarDef (变量定义)
+                 │              │
+                 │              ├── IDENT (变量名)
+                 │              └── InitVal (变量初始值，可选)
+                 │                   │
+                 │                   └── Exp (表达式)
+                 │                        │
+                 │                        └── ... (同上)
+                 │
+                 └── Stmt (语句)
+                      │
+                      ├── LVal "=" Exp ";" (赋值语句)
+                      │    │
+                      │    ├── LVal (左值)
+                      │    └── Exp (表达式)
+                      │         │
+                      │         └── ... (同上)
+                      │
+                      └── "return" Exp ";" (返回语句)
+                           │
+                           └── Exp (表达式)
+                                │
+                                └── ... (同上)
+```
 #### 符号表类
 ```cpp
 class SymbolTable {

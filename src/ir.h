@@ -176,23 +176,65 @@ class RetInst : public Instruction {
   RetInst(std::unique_ptr<KoopaValue> v) : value(std::move(v)) {}
   void Dump(std::ostream &os) const override {
     os << "  ret ";
-    value->Dump(os);
+    if (value) {
+      value->Dump(os);
+    } else {
+      os << "0";
+    }
     os << "\n";
+  }
+};
+
+class BranchInst : public Instruction {
+  std::unique_ptr<KoopaValue> cond;
+  std::string true_label;
+  std::string false_label;
+ public:
+  BranchInst(std::unique_ptr<KoopaValue> c, const std::string &t, const std::string &f)
+      : cond(std::move(c)), true_label(t), false_label(f) {}
+  void Dump(std::ostream &os) const override {
+    os << "  br ";
+    cond->Dump(os);
+    os << ", %" << true_label << ", %" << false_label << "\n";
+  }
+};
+
+class JumpInst : public Instruction {
+  std::string target_label;
+ public:
+  JumpInst(const std::string &t) : target_label(t) {}
+  void Dump(std::ostream &os) const override {
+    os << "  jump %" << target_label << "\n";
   }
 };
 
 class BasicBlock {
   std::string name;
+  std::string next_block;
   std::vector<std::unique_ptr<Instruction>> insts;
  public:
   BasicBlock(const std::string &n) : name(n) {}
+  const std::string& GetName() const { return name; }
+  void SetNextBlock(const std::string &n) { next_block = n; }
+  const std::string& GetNextBlock() const { return next_block; }
   void AddInst(std::unique_ptr<Instruction> inst) {
     insts.push_back(std::move(inst));
   }
+  bool HasTerminator() const {
+    if (insts.empty()) return false;
+    auto last = insts.back().get();
+    return dynamic_cast<RetInst*>(last) || 
+           dynamic_cast<JumpInst*>(last) || 
+           dynamic_cast<BranchInst*>(last);
+  }
+  bool IsEmpty() const { return insts.empty(); }
   void Dump(std::ostream &os) const {
     os << "%" << name << ":\n";
     for (const auto &inst : insts) {
       inst->Dump(os);
+    }
+    if (!HasTerminator() && !next_block.empty()) {
+      os << "  jump %" << next_block << "\n";
     }
   }
 };
@@ -207,10 +249,20 @@ class Function {
   void AddBlock(std::unique_ptr<BasicBlock> block) {
     blocks.push_back(std::move(block));
   }
+  BasicBlock* CreateBlock(const std::string &name) {
+    blocks.push_back(std::make_unique<BasicBlock>(name));
+    return blocks.back().get();
+  }
   void Dump(std::ostream &os) const {
     os << "fun @" << name << "(): " << ret_type << " {\n";
-    for (const auto &block : blocks) {
-      block->Dump(os);
+    for (size_t i = 0; i < blocks.size(); ++i) {
+      if (i + 1 < blocks.size()) {
+        blocks[i]->SetNextBlock(blocks[i + 1]->GetName());
+      }
+      blocks[i]->Dump(os);
+    }
+    if (!blocks.empty() && !blocks.back()->HasTerminator()) {
+      os << "  ret 0\n";
     }
     os << "}\n";
   }

@@ -37,6 +37,11 @@ static void CollectReferences(const koopa_raw_program_t &program) {
           }
         } else if (inst->kind.tag == KOOPA_RVT_LOAD) {
           referenced_values.insert(inst);
+        } else if (inst->kind.tag == KOOPA_RVT_BRANCH) {
+          auto &branch = inst->kind.data.branch;
+          if (branch.cond->kind.tag != KOOPA_RVT_INTEGER) {
+            referenced_values.insert(branch.cond);
+          }
         }
       }
     }
@@ -92,6 +97,7 @@ void RiscVGenerator::Visit(const koopa_raw_function_t &func) {
 }
 
 void RiscVGenerator::Visit(const koopa_raw_basic_block_t &bb) {
+  *os_ << bb->name + 1 << ":\n";
   Visit(bb->insts);
 }
 
@@ -126,6 +132,12 @@ void RiscVGenerator::Visit(const koopa_raw_value_t &value) {
       break;
     case KOOPA_RVT_LOAD:
       Visit(kind.data.load, value);
+      break;
+    case KOOPA_RVT_BRANCH:
+      Visit(kind.data.branch);
+      break;
+    case KOOPA_RVT_JUMP:
+      Visit(kind.data.jump);
       break;
     default:
       assert(false);
@@ -177,6 +189,18 @@ void RiscVGenerator::Visit(const koopa_raw_load_t &load, const koopa_raw_value_t
     *os_ << "  sw a0, " << result_stack << "(sp)\n";
     value_stack[value] = result_stack;
   }
+}
+
+void RiscVGenerator::Visit(const koopa_raw_branch_t &branch) {
+  Visit(branch.cond);
+  *os_ << "  bnez a0, " << branch.true_bb->name + 1 << "\n";
+  *os_ << "  j " << branch.false_bb->name + 1 << "\n";
+  last_result = nullptr;
+}
+
+void RiscVGenerator::Visit(const koopa_raw_jump_t &jump) {
+  *os_ << "  j " << jump.target->name + 1 << "\n";
+  last_result = nullptr;
 }
 
 void RiscVGenerator::Visit(const koopa_raw_binary_t &binary, const koopa_raw_value_t &value) {

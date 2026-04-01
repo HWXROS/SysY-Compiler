@@ -27,7 +27,7 @@ using namespace std;
   std::vector<BaseAST*> *ast_list;
 }
 
-%token CONST INT RETURN
+%token CONST INT RETURN IF ELSE
 %token EQ NE LE GE AND OR
 %token <str_val> IDENT
 %token <int_val> INT_CONST
@@ -194,7 +194,13 @@ BType
   ;
 
 Stmt
-  : RETURN Exp ';' {
+  : RETURN ';' {
+    auto ast = new StmtAST();
+    ast->type = StmtType::RETURN;
+    ast->exp = nullptr;
+    $$ = ast;
+  }
+  | RETURN Exp ';' {
     auto ast = new StmtAST();
     ast->type = StmtType::RETURN;
     ast->exp = unique_ptr<BaseAST>($2);
@@ -205,6 +211,35 @@ Stmt
     ast->type = StmtType::ASSIGN;
     ast->lval = unique_ptr<BaseAST>($1);
     ast->exp = unique_ptr<BaseAST>($3);
+    $$ = ast;
+  }
+  | Exp ';' {
+    auto ast = new StmtAST();
+    ast->type = StmtType::EXPR;
+    ast->exp = unique_ptr<BaseAST>($1);
+    $$ = ast;
+  }
+  | ';' {
+    auto ast = new StmtAST();
+    ast->type = StmtType::EMPTY;
+    ast->exp = nullptr;
+    $$ = ast;
+  }
+  | Block {
+    $$ = $1;
+  }
+  | IF '(' Exp ')' Stmt {
+    auto ast = new IfStmtAST();
+    ast->cond = unique_ptr<BaseAST>($3);
+    ast->then_stmt = unique_ptr<BaseAST>($5);
+    ast->else_stmt = nullptr;
+    $$ = ast;
+  }
+  | IF '(' Exp ')' Stmt ELSE Stmt {
+    auto ast = new IfStmtAST();
+    ast->cond = unique_ptr<BaseAST>($3);
+    ast->then_stmt = unique_ptr<BaseAST>($5);
+    ast->else_stmt = unique_ptr<BaseAST>($7);
     $$ = ast;
   }
   ;

@@ -7,32 +7,71 @@
 #include <map>
 #include "ir.h"
 
+class Function;
+class BasicBlock;
+extern thread_local Function* g_current_func;
+extern thread_local BasicBlock* g_current_bb;
+extern thread_local std::vector<BasicBlock*> g_end_block_stack;
+
 enum class StmtType {
   RETURN,
-  ASSIGN
+  ASSIGN,
+  EXPR,      // 表达式语句
+  EMPTY,     // 空语句
+  BLOCK      // 块语句（BlockAST 也用于 Stmt）
 };
 
 class SymbolTable {
  public:
   std::map<std::string, int> const_values;
   std::map<std::string, int> var_addrs;
+  SymbolTable *parent;  // 父作用域
+  
+  SymbolTable(SymbolTable *p = nullptr) : parent(p) {}
+  
+  // 在当前作用域检查是否存在（不查找父作用域）
+  bool ExistsLocal(const std::string &name) const {
+    return const_values.count(name) || var_addrs.count(name);
+  }
+  
+  // 在当前作用域或父作用域检查是否存在
+  bool Exists(const std::string &name) const {
+    if (const_values.count(name) || var_addrs.count(name)) {
+      return true;
+    }
+    if (parent) {
+      return parent->Exists(name);
+    }
+    return false;
+  }
   
   bool IsConst(const std::string &name) const {
-    return const_values.find(name) != const_values.end();
+    if (const_values.count(name)) {
+      return true;
+    }
+    if (parent) {
+      return parent->IsConst(name);
+    }
+    return false;
   }
   
   bool IsVar(const std::string &name) const {
-    return var_addrs.find(name) != var_addrs.end();
-  }
-  
-  bool Exists(const std::string &name) const {
-    return IsConst(name) || IsVar(name);
+    if (var_addrs.count(name)) {
+      return true;
+    }
+    if (parent) {
+      return parent->IsVar(name);
+    }
+    return false;
   }
   
   int GetConstValue(const std::string &name) const {
     auto it = const_values.find(name);
     if (it != const_values.end()) {
       return it->second;
+    }
+    if (parent) {
+      return parent->GetConstValue(name);
     }
     return 0;
   }
@@ -41,6 +80,9 @@ class SymbolTable {
     auto it = var_addrs.find(name);
     if (it != var_addrs.end()) {
       return it->second;
+    }
+    if (parent) {
+      return parent->GetVarAddr(name);
     }
     return 0;
   }
@@ -116,10 +158,8 @@ class BlockAST : public BaseAST {
     }
     std::cout << " }";
   }
-  std::unique_ptr<BasicBlock> GenIR(SymbolTable &symtab) const;
-  std::unique_ptr<KoopaValue> GenIR(BasicBlock *bb, IRBuilder &builder, SymbolTable &symtab) const override {
-    return nullptr;
-  }
+  std::unique_ptr<BasicBlock> GenIR(IRBuilder &builder, SymbolTable &symtab) const;
+  std::unique_ptr<KoopaValue> GenIR(BasicBlock *bb, IRBuilder &builder, SymbolTable &symtab) const override;
 };
 
 class ConstDeclAST : public BaseAST {
@@ -192,6 +232,25 @@ class StmtAST : public BaseAST {
       lval->Dump();
       std::cout << " = ";
       exp->Dump();
+    }
+    std::cout << " }";
+  }
+  std::unique_ptr<KoopaValue> GenIR(BasicBlock *bb, IRBuilder &builder, SymbolTable &symtab) const override;
+};
+
+class IfStmtAST : public BaseAST {
+ public:
+  std::unique_ptr<BaseAST> cond;
+  std::unique_ptr<BaseAST> then_stmt;
+  std::unique_ptr<BaseAST> else_stmt;
+  void Dump() const override {
+    std::cout << "IfStmtAST { ";
+    cond->Dump();
+    std::cout << ", ";
+    then_stmt->Dump();
+    if (else_stmt) {
+      std::cout << ", else, ";
+      else_stmt->Dump();
     }
     std::cout << " }";
   }
