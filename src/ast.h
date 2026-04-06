@@ -13,12 +13,20 @@ extern thread_local Function* g_current_func;
 extern thread_local BasicBlock* g_current_bb;
 extern thread_local std::vector<BasicBlock*> g_end_block_stack;
 
+struct LoopContext {
+  BasicBlock* cond_block;
+  BasicBlock* end_block;
+};
+extern thread_local std::vector<LoopContext> g_loop_stack;
+
 enum class StmtType {
   RETURN,
   ASSIGN,
   EXPR,      // 表达式语句
   EMPTY,     // 空语句
-  BLOCK      // 块语句（BlockAST 也用于 Stmt）
+  BLOCK,     // 块语句（BlockAST 也用于 Stmt）
+  BREAK,     // break 语句
+  CONTINUE   // continue 语句
 };
 
 class SymbolTable {
@@ -253,6 +261,36 @@ class IfStmtAST : public BaseAST {
       else_stmt->Dump();
     }
     std::cout << " }";
+  }
+  std::unique_ptr<KoopaValue> GenIR(BasicBlock *bb, IRBuilder &builder, SymbolTable &symtab) const override;
+};
+
+class WhileStmtAST : public BaseAST {
+ public:
+  std::unique_ptr<BaseAST> cond;
+  std::unique_ptr<BaseAST> body;
+  void Dump() const override {
+    std::cout << "WhileStmtAST { ";
+    cond->Dump();
+    std::cout << ", ";
+    body->Dump();
+    std::cout << " }";
+  }
+  std::unique_ptr<KoopaValue> GenIR(BasicBlock *bb, IRBuilder &builder, SymbolTable &symtab) const override;
+};
+
+class BreakStmtAST : public BaseAST {
+ public:
+  void Dump() const override {
+    std::cout << "BreakStmtAST";
+  }
+  std::unique_ptr<KoopaValue> GenIR(BasicBlock *bb, IRBuilder &builder, SymbolTable &symtab) const override;
+};
+
+class ContinueStmtAST : public BaseAST {
+ public:
+  void Dump() const override {
+    std::cout << "ContinueStmtAST";
   }
   std::unique_ptr<KoopaValue> GenIR(BasicBlock *bb, IRBuilder &builder, SymbolTable &symtab) const override;
 };

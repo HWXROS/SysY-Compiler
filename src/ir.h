@@ -203,6 +203,7 @@ class JumpInst : public Instruction {
   std::string target_label;
  public:
   JumpInst(const std::string &t) : target_label(t) {}
+  const std::string& GetTarget() const { return target_label; }
   void Dump(std::ostream &os) const override {
     os << "  jump %" << target_label << "\n";
   }
@@ -212,11 +213,14 @@ class BasicBlock {
   std::string name;
   std::string next_block;
   std::vector<std::unique_ptr<Instruction>> insts;
+  bool is_protected = false;
  public:
   BasicBlock(const std::string &n) : name(n) {}
   const std::string& GetName() const { return name; }
   void SetNextBlock(const std::string &n) { next_block = n; }
   const std::string& GetNextBlock() const { return next_block; }
+  void SetProtected(bool v) { is_protected = v; }
+  bool IsProtected() const { return is_protected; }
   void AddInst(std::unique_ptr<Instruction> inst) {
     insts.push_back(std::move(inst));
   }
@@ -228,13 +232,17 @@ class BasicBlock {
            dynamic_cast<BranchInst*>(last);
   }
   bool IsEmpty() const { return insts.empty(); }
+  Instruction* GetLastInst() const { 
+    if (insts.empty()) return nullptr;
+    return insts.back().get(); 
+  }
+  void RemoveLastInst() { 
+    if (!insts.empty()) insts.pop_back(); 
+  }
   void Dump(std::ostream &os) const {
     os << "%" << name << ":\n";
     for (const auto &inst : insts) {
       inst->Dump(os);
-    }
-    if (!HasTerminator() && !next_block.empty()) {
-      os << "  jump %" << next_block << "\n";
     }
   }
 };
@@ -253,12 +261,11 @@ class Function {
     blocks.push_back(std::make_unique<BasicBlock>(name));
     return blocks.back().get();
   }
+  size_t GetBlockCount() const { return blocks.size(); }
+  BasicBlock* GetBlock(size_t index) { return blocks[index].get(); }
   void Dump(std::ostream &os) const {
     os << "fun @" << name << "(): " << ret_type << " {\n";
     for (size_t i = 0; i < blocks.size(); ++i) {
-      if (i + 1 < blocks.size()) {
-        blocks[i]->SetNextBlock(blocks[i + 1]->GetName());
-      }
       blocks[i]->Dump(os);
     }
     if (!blocks.empty() && !blocks.back()->HasTerminator()) {

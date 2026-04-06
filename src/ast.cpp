@@ -1,8 +1,12 @@
 #include "ast.h"
+#include <set>
 
 thread_local Function* g_current_func = nullptr;
 thread_local BasicBlock* g_current_bb = nullptr;
 thread_local std::vector<BasicBlock*> g_end_block_stack;
+thread_local std::vector<LoopContext> g_loop_stack;
+thread_local int g_loop_depth = 0;
+thread_local std::set<BasicBlock*> g_protected_blocks;
 
 std::unique_ptr<Program> CompUnitAST::GenIR() const {
   auto program = std::make_unique<Program>();
@@ -48,7 +52,7 @@ std::unique_ptr<KoopaValue> BlockAST::GenIR(BasicBlock *bb, IRBuilder &builder, 
     }
   }
   
-  if (g_current_bb && !g_current_bb->HasTerminator()) {
+  if (g_current_bb && !g_current_bb->HasTerminator() && g_loop_depth == 0) {
     if (!g_end_block_stack.empty()) {
       BasicBlock* outer_end = g_end_block_stack.back();
       if (g_current_bb != outer_end) {
@@ -288,6 +292,101 @@ std::unique_ptr<KoopaValue> IfStmtAST::GenIR(BasicBlock *bb, IRBuilder &builder,
   
   if (pushed_to_stack) {
     g_end_block_stack.pop_back();
+  }
+  
+  return nullptr;
+}
+
+std::unique_ptr<KoopaValue> WhileStmtAST::GenIR(BasicBlock *bb, IRBuilder &builder, SymbolTable &symtab) const {
+  BasicBlock* current_bb = g_current_bb ? g_current_bb : bb;
+  
+  int id = builder.NewId();
+  std::string cond_label = "w" + std::to_string(id * 3 + 1);
+  std::string body_label = "w" + std::to_string(id * 3 + 2);
+  std::string end_label = "w" + std::to_string(id * 3 + 3);
+  
+  size_t block_count_before = g_current_func->GetBlockCount();
+  
+  BasicBlock* cond_bb = g_current_func->CreateBlock(cond_label);
+  BasicBlock* body_bb = g_current_func->CreateBlock(body_label);
+  BasicBlock* end_bb = g_current_func->CreateBlock(end_label);
+  
+  cond_bb->SetProtected(true);
+  body_bb->SetProtected(true);
+  
+  current_bb->AddInst(std::make_unique<JumpInst>(cond_label));
+  
+  LoopContext loop_ctx;
+  loop_ctx.cond_block = cond_bb;
+  loop_ctx.end_block = end_bb;
+  g_loop_stack.push_back(loop_ctx);
+  
+  g_current_bb = cond_bb;
+  auto cond_val = cond->GenIR(cond_bb, builder, symtab);
+  cond_bb->AddInst(std::make_unique<BranchInst>(std::move(cond_val), body_label, end_label));
+  
+  g_current_bb = body_bb;
+  g_loop_depth++;
+  body->GenIR(body_bb, builder, symtab);
+  g_loop_depth--;
+  
+  for (size_t i = block_count_before; i < g_current_func->GetBlockCount(); ++i) {
+    BasicBlock* blk = g_current_func->GetBlock(i);
+    if (blk == cond_bb || blk == body_bb || blk == end_bb) continue;
+    if (blk->IsProtected()) continue;
+    
+    if (!blk->HasTerminator() && !blk->IsEmpty()) {
+      blk->AddInst(std::make_unique<JumpInst>(cond_label));
+    }
+  }
+  
+  if (body_bb && !body_bb->HasTerminator()) {
+    body_bb->AddInst(std::make_unique<JumpInst>(cond_label));
+  }
+  
+  BasicBlock* body_last_bb = g_current_bb;
+  if (body_last_bb && body_last_bb != body_bb && !body_last_bb->HasTerminator() && !body_last_bb->IsProtected()) {
+    body_last_bb->AddInst(std::make_unique<JumpInst>(cond_label));
+  }
+  
+  g_loop_stack.pop_back();
+  
+  cond_bb->SetProtected(false);
+  body_bb->SetProtected(false);
+  
+  while (!end_bb->IsEmpty()) {
+    end_bb->RemoveLastInst();
+  }
+  
+  if (end_bb->IsEmpty() && !g_end_block_stack.empty()) {
+    BasicBlock* target = g_end_block_stack.back();
+    if (end_bb != target) {
+      end_bb->AddInst(std::make_unique<JumpInst>(target->GetName()));
+    }
+  }
+  
+  g_current_bb = end_bb;
+  
+  return nullptr;
+}
+
+std::unique_ptr<KoopaValue> BreakStmtAST::GenIR(BasicBlock *bb, IRBuilder &builder, SymbolTable &symtab) const {
+  BasicBlock* current_bb = g_current_bb ? g_current_bb : bb;
+  
+  if (!g_loop_stack.empty()) {
+    BasicBlock* end_bb = g_loop_stack.back().end_block;
+    current_bb->AddInst(std::make_unique<JumpInst>(end_bb->GetName()));
+  }
+  
+  return nullptr;
+}
+
+std::unique_ptr<KoopaValue> ContinueStmtAST::GenIR(BasicBlock *bb, IRBuilder &builder, SymbolTable &symtab) const {
+  BasicBlock* current_bb = g_current_bb ? g_current_bb : bb;
+  
+  if (!g_loop_stack.empty()) {
+    BasicBlock* cond_bb = g_loop_stack.back().cond_block;
+    current_bb->AddInst(std::make_unique<JumpInst>(cond_bb->GetName()));
   }
   
   return nullptr;

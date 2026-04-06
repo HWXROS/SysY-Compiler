@@ -27,7 +27,7 @@ using namespace std;
   std::vector<BaseAST*> *ast_list;
 }
 
-%token CONST INT RETURN IF ELSE
+%token CONST INT RETURN IF ELSE WHILE BREAK CONTINUE
 %token EQ NE LE GE AND OR
 %token <str_val> IDENT
 %token <int_val> INT_CONST
@@ -240,6 +240,20 @@ Stmt
     ast->cond = unique_ptr<BaseAST>($3);
     ast->then_stmt = unique_ptr<BaseAST>($5);
     ast->else_stmt = unique_ptr<BaseAST>($7);
+    $$ = ast;
+  }
+  | WHILE '(' Exp ')' Stmt {
+    auto ast = new WhileStmtAST();
+    ast->cond = unique_ptr<BaseAST>($3);
+    ast->body = unique_ptr<BaseAST>($5);
+    $$ = ast;
+  }
+  | BREAK ';' {
+    auto ast = new BreakStmtAST();
+    $$ = ast;
+  }
+  | CONTINUE ';' {
+    auto ast = new ContinueStmtAST();
     $$ = ast;
   }
   ;
