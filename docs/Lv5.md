@@ -323,7 +323,12 @@ std::unique_ptr<KoopaValue> BlockAST::GenIR(BasicBlock *bb, IRBuilder &builder, 
   return nullptr;
 }
 ```
-
+```
+FuncDefAST::GenIR
+  └─> BlockAST::GenIR(SymbolTable&)        // 创建新的 bb
+        └─> 内部调用 BlockAST::GenIR(bb, builder, symtab)  // 复用重载追加语句
+              └─> StmtAST::GenIR / ExpAST::GenIR ...
+```
 **关键点**：
 - 每个 Block 都会创建新的 `SymbolTable`，父指针指向外层作用域
 - 内层作用域的变量定义会遮蔽外层同名变量
