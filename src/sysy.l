@@ -28,6 +28,9 @@ Decimal       [1-9][0-9]*
 Octal         0[0-7]*
 Hexadecimal   0[xX][0-9a-fA-F]+
 
+/* 字符常量 */
+CharConst     '([^'\\]|\\[abfnrtv\\'"0])'
+
 %%
 
 {WhiteSpace}    { /* 忽略, 不做任何操作 */ }
@@ -35,6 +38,7 @@ Hexadecimal   0[xX][0-9a-fA-F]+
 
 "const"         { return CONST; }
 "int"           { return INT; }
+"void"          { return VOID; }
 "return"        { return RETURN; }
 "if"            { return IF; }
 "else"          { return ELSE; }

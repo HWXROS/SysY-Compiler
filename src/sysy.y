@@ -2,8 +2,12 @@
   #include <memory>
   #include <string>
   #include <vector>
+  #include <utility>
   #include "ast.h"
 }
+
+%glr-parser
+%expect-rr 1
 
 %{
 
@@ -12,6 +16,9 @@
 
 int yylex();
 void yyerror(std::unique_ptr<BaseAST> &ast, const char *s);
+
+// Global variable to store parse result
+BaseAST* g_parse_result = nullptr;
 
 using namespace std;
 
@@ -25,25 +32,46 @@ using namespace std;
   BaseAST *ast_val;
   char char_val;
   std::vector<BaseAST*> *ast_list;
+  std::vector<std::pair<int, BaseAST*>> *dim_list;
 }
 
-%token CONST INT RETURN IF ELSE WHILE BREAK CONTINUE
+%token CONST INT VOID RETURN IF ELSE WHILE BREAK CONTINUE
 %token EQ NE LE GE AND OR
 %token <str_val> IDENT
 %token <int_val> INT_CONST
 
-%type <ast_val> FuncDef FuncType Block Stmt Exp PrimaryExp UnaryExp MulExp AddExp RelExp EqExp LAndExp LOrExp Number
-%type <ast_val> Decl ConstDecl VarDecl ConstDef VarDef ConstInitVal InitVal LVal ConstExp BType
+%type <ast_val> CompUnit FuncDef FuncType Block Stmt MatchedStmt UnmatchedStmt Exp PrimaryExp UnaryExp MulExp AddExp RelExp EqExp LAndExp LOrExp Number
+%type <ast_val> Decl ConstDecl VarDecl ConstDef VarDef ConstInitVal InitVal LVal ConstExp BType FuncFParam
 %type <char_val> UnaryOp
-%type <ast_list> BlockItem ConstDefList VarDefList
+%type <ast_list> BlockItem ConstDefList VarDefList FuncFParams FuncRParams ConstInitList InitList OptIndexList IndexList
+%type <dim_list> DimList
 
 %%
 
 CompUnit
-  : FuncDef {
-    auto comp_unit = make_unique<CompUnitAST>();
-    comp_unit->func_def = unique_ptr<BaseAST>($1);
-    ast = std::move(comp_unit);
+  : CompUnit Decl {
+    auto comp_unit = static_cast<CompUnitAST*>($1);
+    comp_unit->items.push_back(unique_ptr<BaseAST>($2));
+    $$ = comp_unit;
+    g_parse_result = comp_unit;
+  }
+  | CompUnit FuncDef {
+    auto comp_unit = static_cast<CompUnitAST*>($1);
+    comp_unit->items.push_back(unique_ptr<BaseAST>($2));
+    $$ = comp_unit;
+    g_parse_result = comp_unit;
+  }
+  | Decl {
+    auto comp_unit = new CompUnitAST();
+    comp_unit->items.push_back(unique_ptr<BaseAST>($1));
+    $$ = comp_unit;
+    g_parse_result = comp_unit;
+  }
+  | FuncDef {
+    auto comp_unit = new CompUnitAST();
+    comp_unit->items.push_back(unique_ptr<BaseAST>($1));
+    $$ = comp_unit;
+    g_parse_result = comp_unit;
   }
   ;
 
@@ -55,11 +83,55 @@ FuncDef
     ast->block = unique_ptr<BaseAST>($5);
     $$ = ast;
   }
+  | FuncType IDENT '(' FuncFParams ')' Block {
+    auto ast = new FuncDefAST();
+    ast->func_type = unique_ptr<BaseAST>($1);
+    ast->ident = *unique_ptr<string>($2);
+    auto raw_list = static_cast<vector<BaseAST*>*>($4);
+    for (auto ptr : *raw_list) {
+      ast->params.push_back(unique_ptr<BaseAST>(ptr));
+    }
+    ast->block = unique_ptr<BaseAST>($6);
+    $$ = ast;
+  }
+  ;
+
+FuncFParams
+  : FuncFParam {
+    auto list = new vector<BaseAST*>();
+    list->push_back($1);
+    $$ = list;
+  }
+  | FuncFParams ',' FuncFParam {
+    auto list = static_cast<vector<BaseAST*>*>($1);
+    list->push_back($3);
+    $$ = list;
+  }
+  ;
+
+FuncFParam
+  : BType IDENT {
+    auto ast = new FuncFParamAST();
+    ast->ident = *unique_ptr<string>($2);
+    ast->is_array = false;
+    $$ = ast;
+  }
+  | BType IDENT '[' ']' OptIndexList {
+    auto ast = new FuncFParamAST();
+    ast->ident = *unique_ptr<string>($2);
+    ast->is_array = true;
+    $$ = ast;
+  }
   ;
 
 FuncType
   : INT {
     $$ = new FuncTypeAST();
+  }
+  | VOID {
+    auto ast = new FuncTypeAST();
+    ast->is_void = true;
+    $$ = ast;
   }
   ;
 
@@ -135,10 +207,45 @@ ConstDef
     ast->init_val = unique_ptr<BaseAST>($3);
     $$ = ast;
   }
+  | IDENT DimList '=' ConstInitVal {
+    auto ast = new ConstDefAST();
+    ast->ident = *unique_ptr<string>($1);
+    auto dim_list = static_cast<vector<pair<int, BaseAST*>>* >($2);
+    for (auto &p : *dim_list) {
+      ast->dims.push_back(p.first);
+      ast->dim_exps.push_back(unique_ptr<BaseAST>(p.second));
+    }
+    delete dim_list;
+    ast->init_val = unique_ptr<BaseAST>($4);
+    $$ = ast;
+  }
   ;
 
 ConstInitVal
   : ConstExp {
+    $$ = $1;
+  }
+  | '{' '}' {
+    auto ast = new InitListAST();
+    $$ = ast;
+  }
+  | '{' ConstInitList '}' {
+    auto ast = new InitListAST();
+    for (auto item : *$2) {
+      ast->items.push_back(unique_ptr<BaseAST>(item));
+    }
+    delete $2;
+    $$ = ast;
+  }
+  ;
+
+ConstInitList
+  : ConstInitVal {
+    $$ = new vector<BaseAST*>();
+    $$->push_back($1);
+  }
+  | ConstInitList ',' ConstInitVal {
+    $1->push_back($3);
     $$ = $1;
   }
   ;
@@ -179,10 +286,71 @@ VarDef
     ast->has_init = true;
     $$ = ast;
   }
+  | IDENT DimList {
+    auto ast = new VarDefAST();
+    ast->ident = *unique_ptr<string>($1);
+    auto dim_list = static_cast<vector<pair<int, BaseAST*>>* >($2);
+    for (auto &p : *dim_list) {
+      ast->dims.push_back(p.first);
+      ast->dim_exps.push_back(unique_ptr<BaseAST>(p.second));
+    }
+    delete dim_list;
+    ast->has_init = false;
+    $$ = ast;
+  }
+  | IDENT DimList '=' InitVal {
+    auto ast = new VarDefAST();
+    ast->ident = *unique_ptr<string>($1);
+    auto dim_list = static_cast<vector<pair<int, BaseAST*>>* >($2);
+    for (auto &p : *dim_list) {
+      ast->dims.push_back(p.first);
+      ast->dim_exps.push_back(unique_ptr<BaseAST>(p.second));
+    }
+    delete dim_list;
+    ast->init_val = unique_ptr<BaseAST>($4);
+    ast->has_init = true;
+    $$ = ast;
+  }
+  ;
+
+DimList
+  : DimList '[' ConstExp ']' {
+    auto list = static_cast<vector<pair<int, BaseAST*>>* >($1);
+    list->push_back({0, $3});
+    $$ = list;
+  }
+  | '[' ConstExp ']' {
+    auto list = new vector<pair<int, BaseAST*>>();
+    list->push_back({0, $2});
+    $$ = list;
+  }
   ;
 
 InitVal
   : Exp {
+    $$ = $1;
+  }
+  | '{' '}' {
+    auto ast = new InitListAST();
+    $$ = ast;
+  }
+  | '{' InitList '}' {
+    auto ast = new InitListAST();
+    for (auto item : *$2) {
+      ast->items.push_back(unique_ptr<BaseAST>(item));
+    }
+    delete $2;
+    $$ = ast;
+  }
+  ;
+
+InitList
+  : InitVal {
+    $$ = new vector<BaseAST*>();
+    $$->push_back($1);
+  }
+  | InitList ',' InitVal {
+    $1->push_back($3);
     $$ = $1;
   }
   ;
@@ -194,6 +362,11 @@ BType
   ;
 
 Stmt
+  : MatchedStmt
+  | UnmatchedStmt
+  ;
+
+MatchedStmt
   : RETURN ';' {
     auto ast = new StmtAST();
     ast->type = StmtType::RETURN;
@@ -228,21 +401,14 @@ Stmt
   | Block {
     $$ = $1;
   }
-  | IF '(' Exp ')' Stmt {
-    auto ast = new IfStmtAST();
-    ast->cond = unique_ptr<BaseAST>($3);
-    ast->then_stmt = unique_ptr<BaseAST>($5);
-    ast->else_stmt = nullptr;
-    $$ = ast;
-  }
-  | IF '(' Exp ')' Stmt ELSE Stmt {
+  | IF '(' Exp ')' MatchedStmt ELSE MatchedStmt {
     auto ast = new IfStmtAST();
     ast->cond = unique_ptr<BaseAST>($3);
     ast->then_stmt = unique_ptr<BaseAST>($5);
     ast->else_stmt = unique_ptr<BaseAST>($7);
     $$ = ast;
   }
-  | WHILE '(' Exp ')' Stmt {
+  | WHILE '(' Exp ')' MatchedStmt {
     auto ast = new WhileStmtAST();
     ast->cond = unique_ptr<BaseAST>($3);
     ast->body = unique_ptr<BaseAST>($5);
@@ -258,6 +424,23 @@ Stmt
   }
   ;
 
+UnmatchedStmt
+  : IF '(' Exp ')' Stmt {
+    auto ast = new IfStmtAST();
+    ast->cond = unique_ptr<BaseAST>($3);
+    ast->then_stmt = unique_ptr<BaseAST>($5);
+    ast->else_stmt = nullptr;
+    $$ = ast;
+  }
+  | IF '(' Exp ')' MatchedStmt ELSE UnmatchedStmt {
+    auto ast = new IfStmtAST();
+    ast->cond = unique_ptr<BaseAST>($3);
+    ast->then_stmt = unique_ptr<BaseAST>($5);
+    ast->else_stmt = unique_ptr<BaseAST>($7);
+    $$ = ast;
+  }
+  ;
+
 Exp
   : LOrExp {
     $$ = $1;
@@ -265,10 +448,38 @@ Exp
   ;
 
 LVal
-  : IDENT {
+  : IDENT OptIndexList {
     auto ast = new LValAST();
     ast->ident = *unique_ptr<string>($1);
+    if ($2) {
+      auto list = static_cast<vector<BaseAST*>*>(($2));
+      for (auto ptr : *list) {
+        ast->indexes.push_back(unique_ptr<BaseAST>(ptr));
+      }
+    }
     $$ = ast;
+  }
+  ;
+
+OptIndexList
+  : /* empty */ {
+    $$ = nullptr;
+  }
+  | IndexList {
+    $$ = $1;
+  }
+  ;
+
+IndexList
+  : '[' Exp ']' {
+    auto list = new vector<BaseAST*>();
+    list->push_back($2);
+    $$ = list;
+  }
+  | IndexList '[' Exp ']' {
+    auto list = static_cast<vector<BaseAST*>*>(($1));
+    list->push_back($3);
+    $$ = list;
   }
   ;
 
@@ -429,9 +640,36 @@ UnaryExp
   }
   ;
 
+FuncRParams
+  : Exp {
+    auto list = new vector<BaseAST*>();
+    list->push_back($1);
+    $$ = list;
+  }
+  | FuncRParams ',' Exp {
+    auto list = static_cast<vector<BaseAST*>*>($1);
+    list->push_back($3);
+    $$ = list;
+  }
+  ;
+
 PrimaryExp
   : '(' Exp ')' {
     $$ = $2;
+  }
+  | IDENT '(' FuncRParams ')' {
+    auto ast = new CallExprAST();
+    ast->ident = *unique_ptr<string>($1);
+    auto raw_list = static_cast<vector<BaseAST*>*>($3);
+    for (auto ptr : *raw_list) {
+      ast->args.push_back(unique_ptr<BaseAST>(ptr));
+    }
+    $$ = ast;
+  }
+  | IDENT '(' ')' {
+    auto ast = new CallExprAST();
+    ast->ident = *unique_ptr<string>($1);
+    $$ = ast;
   }
   | LVal {
     $$ = $1;
